@@ -9,6 +9,7 @@ imputation(
   workers = 1,
   mtry = floor(ncol(data)/3),
   init = init_mean_freq,
+  stop_crit = c("delta", "oob"),
   ...
 )
 }

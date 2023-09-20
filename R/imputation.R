@@ -10,6 +10,7 @@ utils::globalVariables(c("across", "everything", "predictions"))
 #' @param init A function for initialization of missing values in the data
 #' @param mtry Number of columns to use in each tree
 #' @param ... Additional arguments to [ranger::ranger].
+#' @param stop_crit To stop the first time the OOB or delta increases
 #'
 #' @return a `data.frame` with `NA` values replaced by imputed values.
 #' @export
@@ -31,8 +32,10 @@ imputation <- function(data,
                        workers = 1,
                        mtry = floor(ncol(data) / 3),
                        init = init_mean_freq,
+                       stop_crit = c("delta", "oob"),
                        ...) {
 
+  stop_crit <- match.arg(stop_crit)
   mis_indx <- apply(data, 2, \(.x) which(is.na(.x)))
   if (length(mis_indx) == 0) {
     rlang::warn(c("Data has no missing values.", "Returning as is."))
@@ -46,7 +49,7 @@ imputation <- function(data,
 
   dif <- vector()
   n_diff <- Inf
-  n_oob <- NA
+  n_oob <- Inf
 
   imp_mat <- init(data)
 
@@ -60,6 +63,12 @@ imputation <- function(data,
   rf_pars[names(in_pars)] <- in_pars[names(in_pars)]
   rf <- purrr::partial(ranger::ranger, !!!rf_pars)
   fc <- purrr::partial(formatC, digits = 3, format = "e")
+
+  if (stop_crit == "delta") {
+    stopper <- rlang::quo(n_diff > sum(dif))
+  } else {
+    stopper <- rlang::quo(n_oob > sum(oob))
+  }
 
   cat("Estimating Imputation Values\n")
   while (TRUE) {
@@ -80,22 +89,22 @@ imputation <- function(data,
         stats::predict(dplyr::slice(imp_mat, idx)) %>%
         magrittr::use_series(predictions)
 
-      dif[i] <- evaluate_imputation(imp_mat[idx, i], pred)
+      dif[i] <- evaluate_imputation(imp_mat[[i]][idx], pred)
 
       imp_mat[idx, i] <- pred
       oob[i] <- rf_model$prediction.error
     }
-    if (n_diff > sum(dif)) {
+    if (rlang::eval_tidy(stopper)) {
       s_oob <- sum(oob)
       sn_diff <- sum(dif)
       sig <- ifelse(sum(n_oob) < s_oob, "<", ">")
-      x <- matrix(c(dif, oob), nrow = 2, byrow = T,)
+      x <- matrix(c(dif, oob), nrow = 2, byrow = T)
       colnames(x) <- names(dif)
       rownames(x) <- c("\U0394:", "OOB error:")
       cat(
         "Previous \U0394   (total):\t", fc(n_diff), "\t>\tCurrent \U0394 (total): ", fc(sn_diff), "\n",
         "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total): ", fc(s_oob), "\n",
-        sep=''
+        sep= ''
       )
       print(fc(x), quote = F)
       n_diff <- sn_diff
@@ -117,7 +126,12 @@ imputation <- function(data,
     idx <- mis_indx[[i]]
     data[idx, i] <- imp_out[idx, i]
   }
-  return(data)
+  return(
+    list(
+      data = data,
+      oob = n_oob
+    )
+  )
 }
 print_it_time <- function(tic) {
   toc <- Sys.time() - tic
