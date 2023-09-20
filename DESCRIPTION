@@ -1,11 +1,26 @@
 Package: mfvroom
 Type: Package
-Title: What the Package Does (Title Case)
-Version: 0.1.0
-Author: Who wrote it
-Maintainer: The package maintainer <yourself@somewhere.net>
+Title: MissForst Imputation Via Ranger Backed For Optimized Implementation On Big Data
+Version: 0.0.1
+Authors@R: 
+    person("Philip", "Berg", , "pb1015@msstate.edu", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-3772-6185"))
+Maintainer: Philip Berg <pb105@msstate.edu>
 Description: More about what it does (maybe more than one line)
     Use four spaces when indenting paragraphs within the Description.
-License: What license is it under?
+URL: https://github.com/PhilipBerg/baldur
 Encoding: UTF-8
 LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.3
+Biarch: true
+Depends: 
+    R (>= 4.2.0)
+BugReports: https://github.com/PhilipBerg/mfvroom/issues
+License: MIT + file LICENSE
+Imports: 
+    dplyr,
+    magrittr,
+    purrr,
+    ranger,
+    rlang
