@@ -33,6 +33,7 @@ imputation <- function(data,
                        mtry = floor(ncol(data) / 3),
                        init = init_mean_freq,
                        stop_crit = c("delta", "oob"),
+                       trim = TRUE,
                        ...) {
 
   stop_crit <- match.arg(stop_crit)
@@ -58,7 +59,7 @@ imputation <- function(data,
     names(mis_indx)
   )
 
-  rf_pars <- list(mtry = mtry)
+  rf_pars <- list(mtry = mtry, num.threads = workers)
   in_pars <- rlang::list2(...)
   rf_pars[names(in_pars)] <- in_pars[names(in_pars)]
   rf <- purrr::partial(ranger::ranger, !!!rf_pars)
@@ -80,10 +81,18 @@ imputation <- function(data,
 
       idx <- mis_indx[[i]]
 
-      rf_model <- rf(
-        form, dplyr::slice(imp_mat, -idx),
-        num.threads = workers
-      )
+      if (trim) {
+        tv_data <- dplyr::slice(imp_mat, -idx)
+        N       <- nrow(imp_mat)
+        v_data  <- sample.int(N, round(.25*N))
+        t_data  <- dplyr::slice(imp_mat, -v_data)
+        v_data  <- dplyr::slice(imp_mat, v_data)
+        rf_model <- lasso_trim_rf(form, i, t_data, v_data, rf)
+      } else {
+        rf_model <- rf(
+          form, dplyr::slice(imp_mat, -idx),
+        )
+      }
 
       pred <- rf_model %>%
         stats::predict(dplyr::slice(imp_mat, idx)) %>%
@@ -102,8 +111,8 @@ imputation <- function(data,
       colnames(x) <- names(dif)
       rownames(x) <- c("\U0394:", "OOB error:")
       cat(
-        "Previous \U0394   (total):\t", fc(n_diff), "\t>\tCurrent \U0394 (total): ", fc(sn_diff), "\n",
-        "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total): ", fc(s_oob), "\n",
+        "Previous \U0394   (total):\t", fc(n_diff), "\t>\tCurrent \U0394 (total):\t", fc(sn_diff), "\n",
+        "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total):\t", fc(s_oob), "\n",
         sep= ''
       )
       print(fc(x), quote = F)
@@ -114,8 +123,8 @@ imputation <- function(data,
     } else {
       sig <- ifelse(sum(n_oob) < s_oob, "<", ">")
       cat(
-        "Previous \U0394   (total):\t", fc(n_diff), "\t<\tCurrent \U0394 (total): ", fc(sum(dif)), "\n",
-        "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total): ", fc(s_oob), "\n",
+        "Previous \U0394   (total):\t", fc(n_diff), "\t<\tCurrent \U0394 (total):\t", fc(sum(dif)), "\n",
+        "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total):\t", fc(s_oob), "\n",
         "\nBreaking \n", sep = ""
       )
       print_it_time(tic)
@@ -141,21 +150,21 @@ print_it_time <- function(tic) {
   )
 }
 
-
+#' @export
 evaluate_imputation <- function(old, current) {
   UseMethod("evaluate_imputation")
 }
-
+#' @export
 evaluate_imputation.numeric <- function(old, current) {
   sum(
     (old - current)^2
   ) / sum(current^2)
 }
-
+#' @export
 evaluate_imputation.character <- function(old, current) {
   mean(old != current)
 }
-
+#' @export
 evaluate_imputation.factor <- function(old, current) {
   mean(old != current)
 }
