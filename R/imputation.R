@@ -56,8 +56,8 @@ imputation <- function(data,
   n_diff <- Inf
   n_oob <- Inf
 
-
-  init_call <- rlang::expr(init(data, !!!init_args))
+  init_call <- rlang::expr(!!init(data, !!!init_args))
+  init_call <- rlang::call2(init_call, data = data, !!!init_args)
   imp_mat   <- rlang::eval_tidy(init_call)
 
   oob <- setNames(
