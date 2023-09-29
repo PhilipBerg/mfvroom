@@ -11,6 +11,7 @@ utils::globalVariables(c("across", "everything", "predictions"))
 #' @param mtry Number of columns to use in each tree
 #' @param ... Additional arguments to [ranger::ranger].
 #' @param stop_crit To stop the first time the OOB or delta increases
+#' @param init_args An optional list of arguments to be passed to the init function
 #'
 #' @return a `data.frame` with `NA` values replaced by imputed values.
 #' @export
@@ -33,11 +34,14 @@ imputation <- function(data,
                        mtry = floor(ncol(data) / 3),
                        init = init_mean_freq,
                        stop_crit = c("delta", "oob"),
-                       trim = TRUE,
+                       sparsity = c("none", "trim", "weight", "sse"),
+                       case_weights = NULL,
+                       init_args = list(),
                        ...) {
 
   stop_crit <- match.arg(stop_crit)
-  mis_indx <- apply(data, 2, \(.x) which(is.na(.x)))
+  sparsity <- match.arg(sparsity)
+  mis_indx <- purrr::map(data, \(.x) which(is.na(.x)))
   if (length(mis_indx) == 0) {
     rlang::warn(c("Data has no missing values.", "Returning as is."))
     return(data)
@@ -52,7 +56,9 @@ imputation <- function(data,
   n_diff <- Inf
   n_oob <- Inf
 
-  imp_mat <- init(data)
+
+  init_call <- rlang::expr(init(data, !!!init_args))
+  imp_mat   <- rlang::eval_tidy(init_call)
 
   oob <- setNames(
     vector(mode = "numeric", length = length(mis_indx)),
@@ -80,23 +86,35 @@ imputation <- function(data,
       )
 
       idx <- mis_indx[[i]]
+      t_data <- dplyr::slice(imp_mat, -idx)
+      cw <- case_weights[[i]][-idx]
 
-      if (trim) {
-        tv_data <- dplyr::slice(imp_mat, -idx)
-        N       <- nrow(imp_mat)
-        v_data  <- sample.int(N, round(.25*N))
-        t_data  <- dplyr::slice(imp_mat, -v_data)
-        v_data  <- dplyr::slice(imp_mat, v_data)
-        rf_model <- lasso_trim_rf(form, i, t_data, v_data, rf)
+      if (sparsity == "trim") {
+        rf_model <- lasso_trim_rf(form, i, t_data, rf, cw)
+      } else if (sparsity == "weight") {
+        rw <- ridge_weights(form, i, t_data, rf, cw)
+        rf_model <- rw$rf_mod
+        w <- rw$w
+      } else if (sparsity == "sse") {
+        sw <- sse_weights(form, i, t_data, rf, cw)
+        rf_model <- sw$rf_mod
+        w <- sw$w
       } else {
         rf_model <- rf(
-          form, dplyr::slice(imp_mat, -idx),
+          form, t_data, case.weights = cw
         )
       }
 
-      pred <- rf_model %>%
-        stats::predict(dplyr::slice(imp_mat, idx)) %>%
-        magrittr::use_series(predictions)
+      if (sparsity %in% c("trim", "none")) {
+        pred <- rf_model %>%
+          stats::predict(dplyr::slice(imp_mat, idx)) %>%
+          magrittr::use_series(predictions)
+      } else {
+        pred <- rf_model %>%
+          stats::predict(dplyr::slice(imp_mat, idx), predict.all = T) %>%
+          magrittr::use_series(predictions)
+        pred <- pred %*% w
+      }
 
       dif[i] <- evaluate_imputation(imp_mat[[i]][idx], pred)
 
@@ -106,14 +124,29 @@ imputation <- function(data,
     if (rlang::eval_tidy(stopper)) {
       s_oob <- sum(oob)
       sn_diff <- sum(dif)
-      sig <- ifelse(sum(n_oob) < s_oob, "<", ">")
-      x <- matrix(c(dif, oob), nrow = 2, byrow = T)
+      x <- matrix(dif, nrow = 1, byrow = T)
       colnames(x) <- names(dif)
-      rownames(x) <- c("\U0394:", "OOB error:")
+      rownames(x) <- "\U0394:"
+      mp <- paste0(
+        "Previous \U0394   (total):\t", fc(n_diff),
+        "\t>\tCurrent \U0394 (total):\t", fc(sn_diff)
+      )
+      if (sparsity == "none") {
+        xo <- matrix(oob, nrow = 1, byrow = T)
+        rownames(xo) <- "OOB error:"
+        x <- rbind(x, xo)
+        sig <- ifelse(sum(n_oob) < s_oob, "<", ">")
+        mp <- paste0(
+          mp,
+          paste0(
+            "\nPrevious OOB (total):\t", fc(sum(n_oob)), "\t", sig,
+            "\tCurrent OOB (total):\t", fc(s_oob), "\n"
+          ), collapse = "\n"
+        )
+      }
       cat(
-        "Previous \U0394   (total):\t", fc(n_diff), "\t>\tCurrent \U0394 (total):\t", fc(sn_diff), "\n",
-        "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total):\t", fc(s_oob), "\n",
-        sep= ''
+        mp,
+        sep = '\n'
       )
       print(fc(x), quote = F)
       n_diff <- sn_diff
@@ -121,12 +154,33 @@ imputation <- function(data,
       imp_out <- imp_mat
       print_it_time(tic)
     } else {
-      sig <- ifelse(sum(n_oob) < s_oob, "<", ">")
-      cat(
-        "Previous \U0394   (total):\t", fc(n_diff), "\t<\tCurrent \U0394 (total):\t", fc(sum(dif)), "\n",
-        "Previous OOB (total):\t", fc(sum(n_oob)), "\t", sig, "\tCurrent OOB (total):\t", fc(s_oob), "\n",
-        "\nBreaking \n", sep = ""
+      # print_it_stats(oob, n_oob, s_oob, dif, n_diff, sn_diff, trim, fc)
+      x <- matrix(dif, nrow = 1, byrow = T)
+      colnames(x) <- names(dif)
+      rownames(x) <- "\U0394:"
+      mp <- paste0(
+        "Previous \U0394   (total):\t", fc(n_diff),
+        "\t\U2264\tCurrent \U0394 (total):\t", fc(sn_diff)
       )
+      if (sparsity == "none") {
+        xo <- matrix(oob, nrow = 1, byrow = T)
+        rownames(xo) <- "OOB error:"
+        x <- rbind(x, xo)
+        sig <- ifelse(sum(n_oob) < s_oob, "<", ">")
+        mp <- paste0(
+          mp,
+          paste0(
+            "\nPrevious OOB (total):\t", fc(sum(n_oob)), "\t", sig,
+            "\tCurrent OOB (total):\t",  fc(s_oob), "\n"
+          ), collapse = "\n"
+        )
+      }
+      cat(
+        mp, "\n",
+        sep = '\n'
+      )
+      print(fc(x), quote = F)
+      cat("Breaking\n")
       print_it_time(tic)
       break
     }
@@ -150,6 +204,9 @@ print_it_time <- function(tic) {
   )
 }
 
+#' print_it_stats <- function(oob, n_oob, s_oob, dif, n_diff, sn_diff, trim, fc) {
+#' }
+
 #' @export
 evaluate_imputation <- function(old, current) {
   UseMethod("evaluate_imputation")
@@ -167,4 +224,13 @@ evaluate_imputation.character <- function(old, current) {
 #' @export
 evaluate_imputation.factor <- function(old, current) {
   mean(old != current)
+}
+
+
+calc_nrmse <- function(x, y) {
+  {x - y} %>%
+    magrittr::raise_to_power(2) %>%
+    mean() %>%
+    magrittr::divide_by(var(y)) %>%
+    sqrt()
 }

@@ -20,7 +20,11 @@ BugReports: https://github.com/PhilipBerg/mfvroom/issues
 License: MIT + file LICENSE
 Imports: 
     dplyr,
+    ggplot2,
+    glmnet,
     magrittr,
     purrr,
     ranger,
-    rlang
+    rlang,
+    stringr,
+    tibble
