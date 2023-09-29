@@ -10,6 +10,9 @@ imputation(
   mtry = floor(ncol(data)/3),
   init = init_mean_freq,
   stop_crit = c("delta", "oob"),
+  sparsity = c("none", "trim", "weight", "sse"),
+  case_weights = NULL,
+  init_args = list(),
   ...
 )
 }
@@ -22,6 +25,10 @@ missing values has to be \code{NA}.}
 \item{mtry}{Number of columns to use in each tree}
 
 \item{init}{A function for initialization of missing values in the data}
+
+\item{stop_crit}{To stop the first time the OOB or delta increases}
+
+\item{init_args}{An optional list of arguments to be passed to the init function}
 
 \item{...}{Additional arguments to \link[ranger:ranger]{ranger::ranger}.}
 }
