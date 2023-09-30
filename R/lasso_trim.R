@@ -1,11 +1,5 @@
 lasso_trim_rf <- function(form, y, data, rf_wrapper, case_weights) {
-  N <- nrow(data)
-  idx <- sample.int(N, round(N*.75), prob = case_weights)
-  test  <- dplyr::slice(data, -idx)
-  train <- dplyr::slice(data,  idx)
-  rf_mod <- rf_wrapper(form, train, case.weights = case_weights[idx])
-  y <- test %>%
-    dplyr::pull(y)
+  train_model()
   pred_test <- predict(rf_mod, test, predict.all = T) %>%
     magrittr::use_series(predictions)
   cv_model <- glmnet::cv.glmnet(
@@ -36,13 +30,7 @@ calc_nrmse <- function(x, y) {
 
 
 ridge_weights <- function(form, y, data, rf_wrapper, case_weights) {
-  N <- nrow(data)
-  idx <- sample.int(N, round(N*.75), prob = case_weights)
-  test  <- dplyr::slice(data, -idx)
-  train <- dplyr::slice(data,  idx)
-  rf_mod <- rf_wrapper(form, train, case.weights = case_weights[idx])
-  y <- test %>%
-    dplyr::pull(y)
+  train_model()
   pred_test <- predict(rf_mod, test, predict.all = T) %>%
     magrittr::use_series(predictions)
   cv_model <- glmnet::cv.glmnet(
@@ -64,13 +52,7 @@ ridge_weights <- function(form, y, data, rf_wrapper, case_weights) {
 }
 
 sse_weights <- function(form, y, data, rf_wrapper, case_weights) {
-  N <- nrow(data)
-  idx <- sample.int(N, round(N*.75), prob = case_weights)
-  test  <- dplyr::slice(data, -idx)
-  train <- dplyr::slice(data,  idx)
-  rf_mod <- rf_wrapper(form, train, case.weights = case_weights[idx])
-  y <- test %>%
-    dplyr::pull(y)
+  train_model()
   w <- predict(rf_mod, test, predict.all = T) %>%
     magrittr::use_series(predictions) %>%
     apply(2, \(.x) calc_nrmse(.x, y)) %>%
@@ -81,4 +63,23 @@ sse_weights <- function(form, y, data, rf_wrapper, case_weights) {
       w = w
     )
   )
+}
+
+
+
+train_model <- function() {
+  x <- parent.frame()
+  data <- x$data
+  N <- nrow(data)
+  if (any(x$case_weights<0)) {
+    cw_sample <- x$case_weights - min(x$case_weights)
+  } else {
+    cw_sample <- x$case_weights
+  }
+  idx <- sample.int(N, round(N*.75), prob = cw_sample)
+  x$test  <- dplyr::slice(data, -idx)
+  train <- dplyr::slice(data,  idx)
+  x$rf_mod <- x$rf_wrapper(x$form, train, case.weights = x$case_weights[idx])
+  x$y <- x$test %>%
+    dplyr::pull(x$y)
 }
