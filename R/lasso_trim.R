@@ -79,7 +79,7 @@ train_model <- function() {
   idx <- sample.int(N, round(N*.75), prob = cw_sample)
   x$test  <- dplyr::slice(data, -idx)
   train <- dplyr::slice(data,  idx)
-  x$rf_mod <- x$rf_wrapper(x$form, train, case.weights = x$case_weights[idx])
+  x$rf_mod <- x$rf_wrapper(x$form, train)
   x$y <- x$test %>%
     dplyr::pull(x$y)
 }
